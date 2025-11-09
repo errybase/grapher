@@ -1,6 +1,7 @@
 package grapher
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -20,6 +21,7 @@ var _ http.Handler = (*Handler)(nil)
 type Handler struct {
 	schema   *graphql.Schema
 	explorer http.Handler
+	ctxFn    ctxFn
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +43,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		res := h.schema.Exec(r.Context(), params.Query, params.OperationName, params.Variables)
+		ctx := r.Context()
+		if h.ctxFn != nil {
+			ctx = h.ctxFn(r)
+		}
+
+		res := h.schema.Exec(ctx, params.Query, params.OperationName, params.Variables)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		if err := json.NewEncoder(w).Encode(res); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	default:
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}
@@ -57,3 +66,11 @@ func WithExplorer(explorer http.Handler) HandlerOpt {
 		h.explorer = explorer
 	}
 }
+
+func WithContext(fn ctxFn) HandlerOpt {
+	return func(h *Handler) {
+		h.ctxFn = fn
+	}
+}
+
+type ctxFn func(*http.Request) context.Context
